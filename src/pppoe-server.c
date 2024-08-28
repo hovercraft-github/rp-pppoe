@@ -1150,6 +1150,7 @@ usage(char const *argv0)
     fprintf(stderr, "   -l             -- Increment local IP address for each session.\n");
     fprintf(stderr, "   -R ip          -- Set start address of remote IP pool.\n");
     fprintf(stderr, "   -S name        -- Advertise specified service-name.\n");
+    fprintf(stderr, "   -D fname       -- Log pppoe debugging information in filename.\n");
     fprintf(stderr, "   -O fname       -- Use PPPD options from specified file\n");
     fprintf(stderr, "                     (default %s).\n", PPPOE_SERVER_OPTIONS);
     fprintf(stderr, "   -p fname       -- Obtain IP address pool from specified file.\n");
@@ -1209,7 +1210,7 @@ main(int argc, char **argv)
     char const *s;
     int cookie_ok = 0;
 
-    char const *options = "X:ix:hI:C:L:R:T:m:FN:f:O:o:skp:lrudPS:q:Q:H:M:U:g:";
+    char const *options = "X:ix:hI:C:L:R:T:m:FN:f:O:o:skp:lrudPS:q:Q:H:M:U:g:D:";
 
     if (getuid() != geteuid() ||
 	getgid() != getegid()) {
@@ -1359,6 +1360,13 @@ main(int argc, char **argv)
 	    }
 	    Eth_PPPOE_Discovery = (uint16_t) discoveryType;
 	    Eth_PPPOE_Session   = (uint16_t) sessionType;
+	    /* This option gets passed to pppoe */
+	    snprintf(PppoeOptions + strlen(PppoeOptions),
+		     SMALLBUF-strlen(PppoeOptions),
+		     " -%c %s", opt, optarg);
+	    break;
+
+	case 'D':
 	    /* This option gets passed to pppoe */
 	    snprintf(PppoeOptions + strlen(PppoeOptions),
 		     SMALLBUF-strlen(PppoeOptions),
