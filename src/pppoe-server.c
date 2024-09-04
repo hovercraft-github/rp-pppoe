@@ -1903,6 +1903,25 @@ makePPPDIpArg(char* buffer, const unsigned char localip[IPV4ALEN], const unsigne
 	buffer += sprintf(buffer, "%u.%u.%u.%u", remoteip[0], remoteip[1], remoteip[2], remoteip[3]);
 }
 
+char *strjoinarray(char *dest, size_t dest_len, char *strings[], size_t number, const char *glue) {
+	size_t glue_length = strlen(glue);
+	char *target = dest;
+	*target = '\0';
+	for (size_t i = 0; i < number; i++) {
+		if (!strings[i]) break;
+		size_t item_len = strlen(strings[i]);
+		if (item_len + glue_length + (target - dest) >= dest_len)
+			break;
+		if (i > 0) {
+			strcat(target, glue);
+			target += glue_length;
+		}
+		strcat(target, strings[i]);
+		target += item_len;
+	}
+	return dest;
+}
+
 /**********************************************************************
 *%FUNCTION: startPPPD
 *%ARGUMENTS:
@@ -1935,51 +1954,62 @@ startPPPD(ClientSession *session)
 
     argv[c++] = "pppd";
 
-    if (UseLinuxKernelModePPPoE) {
-	/* kernel mode */
-	argv[c++] = "plugin";
-	argv[c++] = plugin_path;
+	if (UseLinuxKernelModePPPoE) {
+		/* kernel mode */
+		argv[c++] = "plugin";
+		argv[c++] = plugin_path;
 
-	/* Add "nic-" to interface name */
-	snprintf(buffer, SMALLBUF, "nic-%s", session->ethif->name);
-	argv[c++] = strdup(buffer);
-	if (!argv[c-1]) {
-	    exit(EXIT_FAILURE);
-	}
+		/* Add "nic-" to interface name */
+		snprintf(buffer, SMALLBUF, "nic-%s", session->ethif->name);
+		argv[c++] = strdup(buffer);
+		if (!argv[c - 1]) {
+			exit(EXIT_FAILURE);
+		}
 
-	snprintf(buffer, SMALLBUF, "%u:%02x:%02x:%02x:%02x:%02x:%02x",
-		(unsigned int) ntohs(session->sess),
-		session->eth[0], session->eth[1], session->eth[2],
-		session->eth[3], session->eth[4], session->eth[5]);
-	argv[c++] = "rp_pppoe_sess";
-	argv[c++] = strdup(buffer);
-	if (!argv[c-1]) {
-	    /* TODO: Send a PADT */
-	    exit(EXIT_FAILURE);
-	}
-	argv[c++] = "rp_pppoe_service";
-	argv[c++] = (char *) session->serviceName;
-    } else {
-	/* user mode */
-	argv[c++] = "pty";
+		snprintf(buffer, SMALLBUF, "%u:%02x:%02x:%02x:%02x:%02x:%02x",
+				(unsigned int) ntohs(session->sess), session->eth[0],
+				session->eth[1], session->eth[2], session->eth[3], session->eth[4],
+				session->eth[5]);
+		argv[c++] = "rp_pppoe_sess";
+		argv[c++] = strdup(buffer);
+		if (!argv[c - 1]) {
+			/* TODO: Send a PADT */
+			exit(EXIT_FAILURE);
+		}
+		argv[c++] = "rp_pppoe_service";
+		argv[c++] = (char*) session->serviceName;
+		syslog(LOG_INFO, "Using the kernel mode ppp!");
+	} else {
+		/* user mode */
+		argv[c++] = "pty";
 
-	/* Let's hope service-name does not have ' in it... */
-	snprintf(buffer, sizeof(buffer), "%s -n -I %s -e %u:%02x:%02x:%02x:%02x:%02x:%02x%s -S '%s'",
-		pppoe_path, session->ethif->name,
-		(unsigned int) ntohs(session->sess),
-		session->eth[0], session->eth[1], session->eth[2],
-		session->eth[3], session->eth[4], session->eth[5],
-		PppoeOptions, session->serviceName);
-	argv[c++] = strdup(buffer);
-	if (!argv[c-1]) {
-	    /* TODO: Send a PADT */
-	    exit(EXIT_FAILURE);
-	}
+		if (session->serviceName && *(session->serviceName)) {
+			/* Let's hope service-name does not have ' in it... */
+			snprintf(buffer, sizeof(buffer),
+					"%s -n -I %s -e %u:%02x:%02x:%02x:%02x:%02x:%02x%s -S '%s'",
+					pppoe_path, session->ethif->name,
+					(unsigned int) ntohs(session->sess), session->eth[0],
+					session->eth[1], session->eth[2], session->eth[3], session->eth[4],
+					session->eth[5], PppoeOptions, session->serviceName);
+		} else {
+			snprintf(buffer, sizeof(buffer),
+					"%s -n -I %s -e %u:%02x:%02x:%02x:%02x:%02x:%02x%s",
+					pppoe_path, session->ethif->name,
+					(unsigned int) ntohs(session->sess), session->eth[0],
+					session->eth[1], session->eth[2], session->eth[3], session->eth[4],
+					session->eth[5], PppoeOptions);
+		}
+		argv[c++] = strdup(buffer);
+		if (!argv[c - 1]) {
+			/* TODO: Send a PADT */
+			exit(EXIT_FAILURE);
+		}
 
-	if (Synchronous) {
-	    argv[c++] = "sync";
+		if (Synchronous) {
+			argv[c++] = "sync";
+		}
+		syslog(LOG_INFO, "User mode ppp selected!");
 	}
-    }
 
     argv[c++] = "file";
     argv[c++] = pppoptfile;
@@ -1987,9 +2017,11 @@ startPPPD(ClientSession *session)
     makePPPDIpArg(buffer, session->myip, session->peerip);
     argv[c++] = strdup(buffer);
     if (!argv[c-1]) {
+    	syslog(LOG_INFO, "faile on makePPPDIpArg");
 	/* TODO: Send a PADT */
 	exit(EXIT_FAILURE);
     }
+    syslog(LOG_INFO, "ip arg: %s", buffer);
 
     argv[c++] = "nodetach";
     argv[c++] = "noaccomp";
@@ -2001,33 +2033,45 @@ startPPPD(ClientSession *session)
 	    session->eth[0], session->eth[1], session->eth[2],
 	    session->eth[3], session->eth[4], session->eth[5]);
     if (!(argv[c++] = strdup(buffer))) {
+    	syslog(LOG_INFO, "faile on remotenumber");
 	exit(EXIT_FAILURE);
     }
+    syslog(LOG_INFO, "remotenumber: %s", buffer);
 
     if (PassUnitOptionToPPPD) {
 	argv[c++] = "unit";
 	sprintf(buffer, "%u", (unsigned int) (ntohs(session->sess) - 1 - SessOffset));
 	if (!(argv[c++] = strdup(buffer))) {
+    		syslog(LOG_INFO, "faile on unit");
             exit(EXIT_FAILURE);
         }
+    syslog(LOG_INFO, "unit: %s", buffer);
     }
     if (session->requested_mtu > 1492) {
 	sprintf(buffer, "%u", (unsigned int) session->requested_mtu);
         if (!(mrumtu = strdup(buffer))) {
+    		syslog(LOG_INFO, "faile on mrumtu");
             exit(EXIT_FAILURE);
         }
+    syslog(LOG_INFO, "mrumtu: %s", buffer);
 	argv[c++] = "mru";
         argv[c++] = mrumtu;
 	argv[c++] = "mtu";
         argv[c++] = mrumtu;
     } else {
+    syslog(LOG_INFO, "mrumtu: 1492");
 	argv[c++] = "mru";
 	argv[c++] = "1492";
 	argv[c++] = "mtu";
 	argv[c++] = "1492";
     }
     argv[c++] = NULL;
+    strjoinarray(buffer, SMALLBUF * 2 - 1, argv + 1, c, " ");
+    syslog(LOG_INFO, "calling: %s %s", pppd_path, buffer);
+    closelog();
+    openlog("pppoe-server", LOG_PID, LOG_DAEMON);
     execv(pppd_path, argv);
+    syslog(LOG_INFO, "execv call failed, errno=%i", errno);
     exit(EXIT_FAILURE);
 }
 
